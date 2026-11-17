@@ -27,7 +27,8 @@ for _, e in ipairs(emotes) do
         TwitchEmotes_animation_metadata[tex] = anim[file]
         TwitchEmotes:AddEmote(name, name, tex)
     else
-        TwitchEmotes:AddEmote(name, name, tex .. SIZE)
+        -- e[3]: wide emotes carry their own size and texture coordinates.
+        TwitchEmotes:AddEmote(name, name, tex .. (e[3] or SIZE))
     end
     names[#names + 1] = name
 end
@@ -132,7 +133,8 @@ SlashCmdList[slash] = function()
     for _, e in ipairs(emotes) do
         local tex, a = PATH .. e[2], anim[e[2]]
         local icon = a and TwitchEmotes_BuildEmoteFrameStringWithDimensions(tex, a, 0, 20, 20)
-            or ("|T" .. tex .. ":20:20|t")
+            or ("|T" .. tex .. (e[3] or SIZE):gsub("^:28:(%d+)", function(w)
+                return ":20:" .. math.floor(w * 20 / 28 + 0.5) end) .. "|t")
         line = line .. icon .. " " .. e[1] .. "  "
         n = n + 1
         if n == 6 then print(line); line, n = "", 0 end

@@ -27,10 +27,12 @@ from PIL import Image, ImageSequence
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_WOW = Path(r"D:\Games\World of Warcraft\_forever_")
-EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tga"}
+EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tga", ".avif"}
 NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")  # base addon splits words on space , ' < > ? - . !
 MAX_TEX = 8192   # tallest strip the base packs use
 MAX_FPS = 30     # animator ticks every 33 ms
+CHAT = 28        # chat display height, same as the base addon
+WIDE = 1.25      # static images at least this much wider than tall keep their width
 INTERFACE = "16001, 120100, 120105"  # Forever, plus retail so it loads there too
 
 
@@ -44,15 +46,36 @@ def write_tga(img: Image.Image, path: Path) -> None:
     path.write_bytes(header + data)
 
 
-def fit(frame: Image.Image, size: int) -> Image.Image:
-    """Scale to fit size x size keeping aspect ratio, centered on transparency."""
+def fit(frame: Image.Image, size: int, height: int = None) -> Image.Image:
+    """Scale to fit size x height (default square) keeping aspect ratio, centered on transparency."""
     frame = frame.convert("RGBA")
-    s = size / max(frame.size)
+    height = height or size
+    s = min(size / frame.width, height / frame.height)
     if s != 1:
         frame = frame.resize((max(1, round(frame.width * s)), max(1, round(frame.height * s))), Image.LANCZOS)
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    canvas.paste(frame, ((size - frame.width) // 2, (size - frame.height) // 2), frame)
+    canvas = Image.new("RGBA", (size, height), (0, 0, 0, 0))
+    canvas.paste(frame, ((size - frame.width) // 2, (height - frame.height) // 2), frame)
     return canvas
+
+
+def trim(img: Image.Image) -> Image.Image:
+    """Crop fully transparent borders so the emote fills its chat slot."""
+    img = img.convert("RGBA")
+    box = img.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox()
+    return img.crop(box) if box else img
+
+
+def static_emote(img: Image.Image, size: int):
+    """Static texture plus the |T size string. Wide images get a 2:1 texture and
+    texture coordinates cropped to the content, so they keep their shape in chat."""
+    img = trim(img)
+    if img.width / img.height < WIDE:
+        return fit(img, size), f":{CHAT}:{CHAT}"
+    tex = fit(img, size * 2, size)
+    box = tex.getchannel("A").getbbox() or (0, 0, size * 2, size)
+    left, right = box[0], box[2]
+    width = round(CHAT * (right - left) / size)
+    return tex, f":{CHAT}:{width}:0:0:{size * 2}:{size}:{left}:{right}:0:{size}"
 
 
 def next_pow2(n: int) -> int:
@@ -66,6 +89,7 @@ def load_frames(path: Path):
         return [im.convert("RGBA")], None
     frames, durs = [], []
     for fr in ImageSequence.Iterator(im):
+        fr.load()  # AVIF only fills info["duration"] once the frame is decoded
         d = fr.info.get("duration", im.info.get("duration", 100)) or 100
         if d < 20:  # browsers treat 0-10 ms GIF delays as 100 ms
             d = 100
@@ -112,6 +136,7 @@ def existing_names(wow: Path, pack: str):
 
 def emote_name(stem: str) -> str:
     """'pepe laugh-hard (1)' -> 'pepeLaughHard1': chat-safe, keeps existing caps."""
+    stem = re.sub(r"[-_ .]\d+x$", "", stem)  # 7TV/BTTV size tags: 'LELU-4x' -> 'LELU'
     words = [w for w in re.split(r"[^A-Za-z0-9]+", stem) if w]
     if not words:
         return ""
@@ -166,7 +191,7 @@ def preview_sheet(src: Path, emotes, anim, path: Path) -> None:
     sheet = Image.new("RGBA", (cols * cell, rows * cell), (40, 42, 48, 255))
     from PIL import ImageDraw
     d = ImageDraw.Draw(sheet)
-    for i, (name, tga) in enumerate(emotes):
+    for i, (name, tga, _) in enumerate(emotes):
         f = next(p for p in src.iterdir() if p.stem == name and p.suffix.lower() in EXTS)
         img = fit(load_frames(f)[0][0], 64)
         x, y = (i % cols) * cell, (i // cols) * cell
@@ -202,9 +227,14 @@ def build(args) -> Path:
             print(f"  warning: '{name}' is also in {taken[name]}; whichever loads last wins")
         frames, durs = load_frames(f)
         tga = name + ".tga"
+        suffix = None
         if durs is None:
-            write_tga(fit(frames[0], args.size), out / "emotes" / tga)
-            print(f"  {name:24s} static")
+            tex, suffix = static_emote(frames[0], args.static_size)
+            write_tga(tex, out / "emotes" / tga)
+            wide = suffix != f":{CHAT}:{CHAT}"
+            print(f"  {name:24s} static {tex.width}x{tex.height}" + (f", wide ({suffix.split(':')[2]}px in chat)" if wide else ""))
+            if not wide:
+                suffix = None
         else:
             frames, fps = resample(frames, durs, args.size)
             n = len(frames)
@@ -216,7 +246,7 @@ def build(args) -> Path:
             anim[tga] = dict(nFrames=n, frameWidth=args.size, frameHeight=args.size,
                              imageWidth=args.size, imageHeight=h, framerate=fps)
             print(f"  {name:24s} animated {n} frames @ {fps} fps, {args.size}x{h}")
-        emotes.append((name, tga))
+        emotes.append((name, tga, suffix))
 
     for p in problems:
         print("  " + p)
@@ -229,7 +259,8 @@ def build(args) -> Path:
     lines = ["-- Generated by build.py. Do not edit; re-run the build instead.",
              "local _, ns = ...", f"ns.title = {lua_str(args.title)}",
              f"ns.slash = {lua_str(args.slash) if args.slash else 'nil'}", "ns.emotes = {"]
-    lines += [f"    {{{lua_str(n)}, {lua_str(t)}}}," for n, t in emotes]
+    lines += [f"    {{{lua_str(n)}, {lua_str(t)}" + (f", {lua_str(s)}" if s else "") + "},"
+              for n, t, s in emotes]
     lines += ["}", "ns.anim = {"]
     for t, a in anim.items():
         fields = ", ".join(f"{k} = {v}" for k, v in a.items())
@@ -276,6 +307,8 @@ def main():
     ap.add_argument("--icon", default=cfg.get("icon"), help="emote name for the addon-list icon (or put icon.png next to build.py)")
     ap.add_argument("--source", default=str(HERE / "source"), help="image folder (default source/)")
     ap.add_argument("--incoming", default=str(HERE / "incoming"), help="staging folder moved into source/ first")
+    ap.add_argument("--static-size", type=int, default=64, choices=[32, 64, 128],
+                    help="static emote texture height; 64 stays sharp at high resolutions (default %(default)s)")
     ap.add_argument("--size", type=int, default=32, choices=[32, 64],
                     help="texture size; 64 is sharper on high UI scale but max 128 frames")
     ap.add_argument("--wow", default=str(DEFAULT_WOW), help="WoW flavor folder (default _forever_)")

@@ -27,8 +27,11 @@ In game, `/tam` lists every emote. Type an emote's name in chat, or type `:` and
 1. Dump images into `incoming/`, the staging folder. Messy names are fine. The build moves each image into `source/` under a chat-safe name, for example `pepe laugh-hard (1).png` becomes `pepeLaughHard1`. A name already in use gets a number added. Files that aren't images stay in `incoming/`, and the build lists them.
    - Or drop images straight into `source/`. There the file name is the chat word, so `source/peepoWave.gif` makes `peepoWave`. Names can use letters, digits and `_` only.
    - To rename an emote, rename its file in `source/` and rebuild.
-   - Formats: PNG, JPG, WEBP, BMP and TGA for static emotes; GIF and animated WEBP for animated ones.
-   - Any size works: images are scaled to fit 32×32 and centered on transparency. Square sources look best.
+   - Formats: PNG, JPG, WEBP, AVIF, BMP and TGA for static emotes; GIF, animated WEBP and animated AVIF for animated ones. 7TV/BTTV size tags are dropped from names (`LELU-4x` becomes `LELU`).
+   - Any size works.
+     - **Static emotes:** transparent borders are trimmed, then the image is scaled into a 64×64 texture (`--static-size`).
+     - **Wide static emotes** (at least 1.25:1, like HOLD): they get a 128×64 texture, keep their width in chat, and are cropped to the content.
+     - **Animated emotes:** 32 px frames, at most 256 per strip. Longer clips are played at a lower frame rate to fit. For example, a 24 s clip at 25 fps plays at about 10.6 fps.
    - After each build, `build/preview.png` shows every emote with its name. Animated ones are marked `*`.
 2. Build and install:
    ```bash
