@@ -1,0 +1,32 @@
+# Push a tag like v1.0.3 -> builds the pack and publishes a GitHub release
+# (zip + release.json) that WowUp picks up as an update.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          pip install Pillow
+          python build.py --zip --version "${GITHUB_REF_NAME#v}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/*.zip build/release.json \
+            --title "$GITHUB_REF_NAME" --generate-notes
