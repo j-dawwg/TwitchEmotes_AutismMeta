@@ -3,3 +3,4 @@ __pycache__/
 # staging: images move to source/ on build
 incoming/*
 !incoming/.gitkeep
+options/
