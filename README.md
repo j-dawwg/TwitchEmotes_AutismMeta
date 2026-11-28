@@ -10,7 +10,7 @@ An emote pack for **TwitchEmotes v2**, built like TwitchEmotes Hardcore. It work
 
 Without WowUp: download the zip from the newest [release](https://github.com/j-dawwg/TwitchEmotes_AutismMeta/releases) and unzip it into `Interface/AddOns/`.
 
-In game, `/tam` lists every emote. Type an emote's name in chat, or type `:` and a few letters for autocomplete.
+In game, `/tam` lists every emote. Type an emote's name in chat, or type `:` and a few letters for autocomplete. `/tam debug` prints what the EllesmereUI Chat hook sees, for bug reports.
 
 ## Release an update (maintainer)
 
@@ -77,7 +77,7 @@ The build warns when a name is already used by the base addon or another install
 - Autocomplete: the chat edit boxes hold a reference to the base addon's `AllTwitchEmoteNames` table, so the pack adds its names to that table. Hardcore instead calls `SetupAutoComplete` a second time, which stacks a second set of hooks.
 - Animated emotes are vertical strips 32 px wide, padded to a power-of-two height. GIF frames with uneven delays are resampled to a fixed rate of up to 30 fps.
 - The base animator only matches `Interface\AddOns\TwitchEmotes\Emotes\…`. The pack wraps that function and animates its own paths after the original runs. Hardcore replaces the function outright, with a pattern that matches any `TwitchEmotes*` folder. If Hardcore loads after this pack, its version takes over and still covers this pack, which is why the name has to start with `TwitchEmotes_`.
-- EllesmereUI Chat hides Blizzard's chat text (alpha 0) and draws every line in its own unnamed ScrollingMessageFrame on the chat panel. The base animator only walks Blizzard's `visibleLines`, so under EllesmereUI every animated emote stayed on frame 1. The pack finds those frames through `EllesmereUI._chatCFD(chatFrame).bg` (rescanned every 2 s) and runs the same per-line updater on them, about 30 times a second while animation is on. Without EllesmereUI this does nothing.
+- EllesmereUI Chat hides Blizzard's chat text (alpha 0) and draws every line in its own unnamed ScrollingMessageFrame on the chat panel. The base animator only walks Blizzard's `visibleLines`, so under EllesmereUI every animated emote stayed on frame 1. The pack finds those frames through `EllesmereUI._chatCFD(chatFrame).bg` (rescanned every 2 s; on Forever that frame reports type `Frame` and `IsVisible()` false, so neither is checked) and runs the same per-line updater on them, about 30 times a second while animation is on. Without EllesmereUI this does nothing.
 - Adds one category to the emote menu on the minimap button, split into chunks of 40.
 
 ## Known limits

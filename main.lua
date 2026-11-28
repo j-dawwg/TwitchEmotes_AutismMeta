@@ -142,8 +142,10 @@ local function chatAddonFrames()
         local bg = cf and ok and type(d) == "table" and d.bg
         if bg and bg.GetChildren then
             for _, child in ipairs({ bg:GetChildren() }) do
-                if child ~= cf and child.GetObjectType and child:GetObjectType() == "ScrollingMessageFrame"
-                    and not child:GetName() and type(child.visibleLines) == "table" then
+                -- No object-type test: on Forever its message frame reports
+                -- "Frame" (a mixin frame), not "ScrollingMessageFrame".
+                if child ~= cf and child.GetName and not child:GetName()
+                    and type(child.visibleLines) == "table" then
                     list[#list + 1] = child
                 end
             end
@@ -154,29 +156,83 @@ end
 
 local ticker = CreateFrame("Frame")
 local since, rescan, frames = 0, 10, {}
+local lastErr, ticks = nil, 0
 ticker:SetScript("OnUpdate", function(_, elapsed)
     since, rescan = since + elapsed, rescan + elapsed
     if since < 0.033 then return end
     since = 0
     if not (Emoticons_Settings and Emoticons_Settings.ENABLE_ANIMATEDEMOTES) then return end
     if rescan >= 2 then rescan = 0; frames = chatAddonFrames() end
+    ticks = ticks + 1
     local update = TwitchEmotesAnimator_UpdateEmoteInFontString
+    -- No visibility test: in game these frames report IsVisible() false
+    -- even while on screen. Lines are cheap to skip (no texture, no work).
     for _, smf in ipairs(frames) do
-        if smf:IsVisible() then
-            for _, line in ipairs(smf.visibleLines) do
-                if line.messageInfo ~= TwitchEmotes_HoverMessageInfo then
-                    pcall(update, line, 28, 28)
-                end
+        for _, line in ipairs(smf.visibleLines) do
+            if line.messageInfo ~= TwitchEmotes_HoverMessageInfo then
+                local ok, err = pcall(update, line, 28, 28)
+                if not ok then lastErr = err end
             end
         end
     end
 end)
 
+-- /tam debug: what the chat-addon hook sees (for bug reports).
+local function debugReport()
+    local p = function(...) print("|cff66ccff[tam]|r", ...) end
+    local esc = function(s) return (tostring(s):gsub("|", "||")) end
+    local EUI = _G.EllesmereUI
+    p("animation setting:", tostring(Emoticons_Settings and Emoticons_Settings.ENABLE_ANIMATEDEMOTES),
+      "| base update frame:", tostring(TwitchEmotesUpdateFrame ~= nil),
+      "| wrapper on:", tostring(TwitchEmotesAnimator_UpdateEmoteInFontString ~= original))
+    p("EllesmereUI:", tostring(type(EUI) == "table"), "| _chatCFD:", tostring(type(EUI) == "table" and type(EUI._chatCFD)),
+      "| CHAT_FRAMES:", tostring(type(CHAT_FRAMES) == "table" and #CHAT_FRAMES))
+    if type(EUI) == "table" and type(EUI._chatCFD) == "function" and ChatFrame1 then
+        local ok, d = pcall(EUI._chatCFD, ChatFrame1)
+        local bg = ok and type(d) == "table" and d.bg
+        p("ChatFrame1 panel:", tostring(bg ~= nil and bg ~= false))
+        if bg and bg.GetChildren then
+            for i, c in ipairs({ bg:GetChildren() }) do
+                p("  child", i, c.GetObjectType and c:GetObjectType() or "?", "name:", tostring(c.GetName and c:GetName()),
+                  "visibleLines:", tostring(type(c.visibleLines) == "table" and #c.visibleLines),
+                  "visible:", tostring(c.IsVisible and c:IsVisible()), "shown:", tostring(c.IsShown and c:IsShown()),
+                  "alpha:", tostring(c.GetEffectiveAlpha and c:GetEffectiveAlpha()))
+            end
+        end
+    end
+    local found = chatAddonFrames()
+    p("frames hooked:", #found, "| ticks:", ticks, "| last error:", esc(lastErr))
+    for i, smf in ipairs(found) do
+        local n, shown = 0, 0
+        for _, line in ipairs(smf.visibleLines or {}) do
+            n = n + 1
+            local ok, t = pcall(line.GetText, line)
+            local secret = ok and type(issecretvalue) == "function" and issecretvalue(t)
+            if ok and not secret and type(t) == "string" and t:find("|T", 1, true) and shown < 2 then
+                shown = shown + 1
+                local tex = t:match("|T(.-)|t")
+                p("  frame", i, "emote line, messageInfo:", tostring(line.messageInfo ~= nil), "tex:", esc(tex))
+                local path = tex and tex:match("^(.-%.tga)")
+                p("    anim data for path:", tostring(path and TwitchEmotes_animation_metadata[path] ~= nil))
+                local before = t
+                local uok, uerr = pcall(TwitchEmotesAnimator_UpdateEmoteInFontString, line, 28, 28)
+                local _, after = pcall(line.GetText, line)
+                p("    update ok:", tostring(uok), esc(uerr), "| text changed:", tostring(after ~= before))
+            elseif secret and shown < 2 then
+                shown = shown + 1
+                p("  frame", i, "line text is SECRET (chat lockdown)")
+            end
+        end
+        p("  frame", i, "lines:", n)
+    end
+end
+
 -- /<pack> lists the pack's emotes in chat.
 local slash = ADDON:upper():gsub("[^%w]", "")
 _G["SLASH_" .. slash .. "1"] = "/" .. ADDON:lower():gsub("^twitchemotes_", "te")
 if ns.slash then _G["SLASH_" .. slash .. "2"] = "/" .. ns.slash:gsub("^/", "") end
-SlashCmdList[slash] = function()
+SlashCmdList[slash] = function(msg)
+    if msg and msg:lower():match("^%s*debug") then return debugReport() end
     local line, n = "", 0
     for _, e in ipairs(emotes) do
         local tex, a = PATH .. e[2], anim[e[2]]
