@@ -124,6 +124,54 @@ if type(original) == "function"
     end
 end
 
+-- 5. Chat addons that draw their own messages. EllesmereUI Chat keeps
+-- Blizzard's chat frames running but invisible (alpha 0) and shows every line
+-- in its own unnamed ScrollingMessageFrame on the chat panel (CFD(cf).bg).
+-- The base animator walks only Blizzard's visibleLines, so with it every
+-- animated emote (ours and the base pack's) sits on frame 1. Walk those
+-- frames too, with the same per-line updater. Read-only on EllesmereUI's
+-- side: its exported side-table accessor, then GetChildren on its panel.
+local function chatAddonFrames()
+    local list = {}
+    local EUI = _G.EllesmereUI
+    local CFD = type(EUI) == "table" and EUI._chatCFD
+    if type(CFD) ~= "function" or type(CHAT_FRAMES) ~= "table" then return list end
+    for _, name in pairs(CHAT_FRAMES) do
+        local cf = _G[name]
+        local ok, d = pcall(CFD, cf)
+        local bg = cf and ok and type(d) == "table" and d.bg
+        if bg and bg.GetChildren then
+            for _, child in ipairs({ bg:GetChildren() }) do
+                if child ~= cf and child.GetObjectType and child:GetObjectType() == "ScrollingMessageFrame"
+                    and not child:GetName() and type(child.visibleLines) == "table" then
+                    list[#list + 1] = child
+                end
+            end
+        end
+    end
+    return list
+end
+
+local ticker = CreateFrame("Frame")
+local since, rescan, frames = 0, 10, {}
+ticker:SetScript("OnUpdate", function(_, elapsed)
+    since, rescan = since + elapsed, rescan + elapsed
+    if since < 0.033 then return end
+    since = 0
+    if not (Emoticons_Settings and Emoticons_Settings.ENABLE_ANIMATEDEMOTES) then return end
+    if rescan >= 2 then rescan = 0; frames = chatAddonFrames() end
+    local update = TwitchEmotesAnimator_UpdateEmoteInFontString
+    for _, smf in ipairs(frames) do
+        if smf:IsVisible() then
+            for _, line in ipairs(smf.visibleLines) do
+                if line.messageInfo ~= TwitchEmotes_HoverMessageInfo then
+                    pcall(update, line, 28, 28)
+                end
+            end
+        end
+    end
+end)
+
 -- /<pack> lists the pack's emotes in chat.
 local slash = ADDON:upper():gsub("[^%w]", "")
 _G["SLASH_" .. slash .. "1"] = "/" .. ADDON:lower():gsub("^twitchemotes_", "te")
